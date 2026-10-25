@@ -1,46 +1,52 @@
 name: ${COMPOSE_PROJECT_NAME:-nextcloud}
 
 services:
-  caddy:
-    build: ./caddy
+  db:
+    image: postgres:${POSTGRES_TAG}
     restart: unless-stopped
-    ports:
-      - "${CADDY_HTTPS_BIND:-443}:443"
-      - "${CADDY_HTTPS_BIND:-443}:443/udp"   # HTTP/3
     environment:
-      DOMAIN: ${DOMAIN}
-      ACME_EMAIL: ${ACME_EMAIL}
-      CF_API_TOKEN: ${CF_API_TOKEN}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    networks:
-      - proxy
-    depends_on:
-      - nextcloud
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:${REDIS_TAG}
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis_data:/data
 
   nextcloud:
     image: nextcloud:${NEXTCLOUD_TAG}
     restart: unless-stopped
+    ports:
+      - "${NEXTCLOUD_PORT:-8080}:80"
     environment:
       # Database
       POSTGRES_HOST: db
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      # Initial admin (only used on first install)
+      # First install only
       NEXTCLOUD_ADMIN_USER: ${NEXTCLOUD_ADMIN_USER}
       NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
-      NEXTCLOUD_TRUSTED_DOMAINS: ${DOMAIN}
-      # Cache / locking
+      NEXTCLOUD_TRUSTED_DOMAINS: ${NEXTCLOUD_TRUSTED_DOMAINS}
+      # Cache and file locking
       REDIS_HOST: redis
       REDIS_HOST_PASSWORD: ${REDIS_PASSWORD}
-      # Reverse proxy (read on every start)
-      TRUSTED_PROXIES: ${PROXY_SUBNET}
-      OVERWRITEPROTOCOL: https
-      OVERWRITEHOST: ${DOMAIN}
-      OVERWRITECLIURL: https://${DOMAIN}
+      # Reverse proxy (empty = no proxy; see docs/NGINX-PROXY.md)
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES}
+      OVERWRITEPROTOCOL: ${OVERWRITEPROTOCOL}
+      OVERWRITEHOST: ${OVERWRITEHOST}
+      OVERWRITECLIURL: ${OVERWRITECLIURL}
       # PHP
       PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT}
       PHP_UPLOAD_LIMIT: ${PHP_UPLOAD_LIMIT}
@@ -48,9 +54,6 @@ services:
     volumes:
       - nextcloud_html:/var/www/html
       - ${NEXTCLOUD_DATA_PATH}:/var/www/html/data
-    networks:
-      - proxy
-      - backend
     depends_on:
       db:
         condition: service_healthy
@@ -66,64 +69,10 @@ services:
     volumes:
       - nextcloud_html:/var/www/html
       - ${NEXTCLOUD_DATA_PATH}:/var/www/html/data
-    networks:
-      - backend
     depends_on:
       - nextcloud
 
-  db:
-    image: postgres:${POSTGRES_TAG}
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      TZ: ${TZ}
-    volumes:
-      - db_data:/var/lib/postgresql/data
-    networks:
-      - backend
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:${REDIS_TAG}
-    restart: unless-stopped
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
-    volumes:
-      - redis_data:/data
-    networks:
-      - backend
-
-  # Optional: only starts with `docker compose --profile tunnel up -d`
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN}
-    networks:
-      - proxy
-    depends_on:
-      - caddy
-    profiles:
-      - tunnel
-
-networks:
-  proxy:
-    name: proxy
-    ipam:
-      config:
-        - subnet: ${PROXY_SUBNET}
-  backend:
-    internal: true
-
 volumes:
-  caddy_data:
-  caddy_config:
-  nextcloud_html:
   db_data:
   redis_data:
+  nextcloud_html:
