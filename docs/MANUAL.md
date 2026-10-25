@@ -282,7 +282,7 @@ Nextcloud can only move up one major version at a time. Once it runs, pin `NEXTC
 | "Access through untrusted domain" | The address you use is not a trusted domain | `occ config:system:set trusted_domains 1 --value=<address>` |
 | Stack does not start after a reboot | NAS share not mounted | Start the NAS, run `sudo mount -a`, check `df -h /home/nextcloud/nextcloud-data` |
 | Nextcloud cannot write files | NAS folder not owned by uid 33 | `sudo chown 33:33 /home/nextcloud/nextcloud-data` (add `-R` if files exist) |
-| Backup: permission denied | NFS rule uses root squash | Set no root squash for the VM's IP on the NAS |
+| Backup: permission denied | NFS rule uses root squash | Set the QNAP NFS rule for the VM's IP to *Squash no users* |
 | "Your data directory is invalid. Ensure there is a file called .ocdata" | The first install ran before the share was mounted or writable | Start over, see below |
 | `sudo mount -a` hangs | Wrong NAS address in `/etc/fstab`, or NFS off on the QNAP | Ctrl+C; check the fstab line uses `192.168.0.249`; check the QNAP NFS service |
 | `showmount`: program not registered | NFS v2/v3 service off on the QNAP | Tick *Enable NFS v2/v3 service* (Part 2, step 1) |
