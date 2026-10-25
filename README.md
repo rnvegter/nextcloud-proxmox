@@ -55,7 +55,7 @@ Before step 3, set up the Storage Box SSH key, `/root/.restic.env`, the restic p
 
 ## Full manual
 
-The step-by-step manual (moving DNS from any registrar to Cloudflare, API token, port forward vs tunnel, Cloudflare settings, Nextcloud hardening, Storage Box setup, restores and troubleshooting) lives in Claude Docs: **Nextcloud + Caddy + Cloudflare setup manual**.
+The step-by-step manual (moving DNS from any registrar to Cloudflare, API token, port forward vs tunnel, Cloudflare settings, Nextcloud hardening, Storage Box setup, restores and troubleshooting) is in [docs/MANUAL.md](docs/MANUAL.md).
 
 ## Secrets
 
