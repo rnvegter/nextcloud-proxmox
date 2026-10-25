@@ -1,8 +1,8 @@
 # Connect Nextcloud to an nginx proxy on another machine
 
-The nginx machine receives `https://cloud.example.com`, holds the HTTPS certificate and forwards every request to Nextcloud at `http://192.168.0.30:8080`. Nextcloud itself stays plain HTTP inside your LAN; it only needs to know that a proxy sits in front of it.
+The nginx machine receives `https://cloud.example.com`, holds the HTTPS certificate and forwards every request to Nextcloud at `http://192.168.0.54:8080`. Nextcloud itself stays plain HTTP inside your LAN; it only needs to know that a proxy sits in front of it.
 
-The examples use `192.168.0.10` for the nginx machine, `192.168.0.30` for the Nextcloud VM and `cloud.example.com` for your domain. Replace the first two with your real addresses.
+The examples use `192.168.0.10` for the nginx machine, `192.168.0.54` for the Nextcloud VM and `cloud.example.com` for your domain. Replace the nginx address with your proxy machine's real IP.
 
 **Before you start**
 
@@ -56,7 +56,7 @@ server {
     location = /.well-known/caldav  { return 301 $scheme://$host/remote.php/dav/; }
 
     location / {
-        proxy_pass http://192.168.0.30:8080;
+        proxy_pass http://192.168.0.54:8080;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -88,7 +88,7 @@ certbot renews the certificate automatically. If you already manage certificates
 
 If the other machine runs Nginx Proxy Manager (the web interface), Step 1 stays the same, with `TRUSTED_PROXIES` set to that machine's IP. Then:
 
-1. *Hosts → Proxy Hosts → Add Proxy Host*: domain `cloud.example.com`, scheme `http`, forward hostname `192.168.0.30`, port `8080`. Tick *Block Common Exploits* and *Websockets Support*.
+1. *Hosts → Proxy Hosts → Add Proxy Host*: domain `cloud.example.com`, scheme `http`, forward hostname `192.168.0.54`, port `8080`. Tick *Block Common Exploits* and *Websockets Support*.
 2. *SSL* tab: *Request a new SSL Certificate*, and tick *Force SSL*, *HTTP/2 Support* and *HSTS Enabled*.
 3. *Advanced* tab, custom configuration:
 
@@ -105,7 +105,7 @@ location = /.well-known/caldav  { return 301 $scheme://$host/remote.php/dav/; }
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| 502 Bad Gateway | nginx cannot reach the VM | From the nginx machine: `curl -I http://192.168.0.30:8080`; check `docker compose ps` on the VM |
+| 502 Bad Gateway | nginx cannot reach the VM | From the nginx machine: `curl -I http://192.168.0.54:8080`; check `docker compose ps` on the VM |
 | "Access through untrusted domain" | Domain not trusted | Run the `occ ... trusted_domains` command from Step 1 |
 | Redirects to `http://` or to port 8080 | Overwrite settings missing | Check the four variables in `.env`, then `docker compose up -d` |
 | 413 Request Entity Too Large | Upload limit in nginx | Raise `client_max_body_size` and reload nginx |

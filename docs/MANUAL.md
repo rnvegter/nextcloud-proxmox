@@ -22,19 +22,19 @@ Around it:
 - A nightly restic job backs up files, database and config to a Hetzner Storage Box.
 
 ```
-Visitor ─▶ router ─▶ nginx proxy (192.168.0.10, HTTPS) ─▶ VM 192.168.0.30:8080 ─▶ nextcloud ─▶ Postgres / Redis / cron
+Visitor ─▶ router ─▶ nginx proxy (192.168.0.10, HTTPS) ─▶ VM 192.168.0.54:8080 ─▶ nextcloud ─▶ Postgres / Redis / cron
                                                                                     │
                                                                   NAS (NFS) ◀───────┘     restic ─▶ Hetzner Storage Box
 ```
 
 Visitors from the internet only ever reach the nginx machine; Nextcloud's port 8080 stays inside your LAN.
 
-The NAS is at `192.168.0.249`. The examples use `192.168.0.30` for the VM; replace it with your VM's real address (`ip -4 addr` shows it).
+Addresses in this setup: the QNAP NAS is `192.168.0.249` and the Nextcloud VM is `192.168.0.54`.
 
 **Prerequisites**
 
 - An Ubuntu 22.04 or 24.04 VM with a fixed LAN IP, 2 vCPU, 4 GB RAM or more.
-- A NAS that can export an NFS share, with a fixed IP.
+- The QNAP NAS at 192.168.0.249, with NFS switched on.
 - A Hetzner Storage Box for backups.
 - The files from this repository: `docker-compose.yml`, `env.example`, the backup script and the systemd units.
 
@@ -64,6 +64,8 @@ sudo usermod -aG docker nextcloud
 
 The `docker` group gives admin-level control over Docker, so the account gets no password and no SSH login. You open a shell as it with `sudo -iu nextcloud`.
 
+If your Ubuntu login is already called `nextcloud` (the account created when installing Ubuntu), skip `adduser`. Only run `sudo usermod -aG docker nextcloud`, log out and back in, and work from that account directly instead of `sudo -iu nextcloud`.
+
 **3. Get the stack files** as the `nextcloud` user:
 
 ```bash
@@ -75,24 +77,70 @@ exit
 
 ## Part 2: User files on the NAS
 
-Nextcloud keeps user files on an NFS share from the NAS. The database and Nextcloud's own code stay on the VM's disk.
+Nextcloud keeps user files on an NFS share on the QNAP. The database and Nextcloud's own code stay on the VM's disk.
 
-**On the NAS:**
+**On the QNAP:**
 
-1. Create a shared folder, for example `nextcloud`.
-2. Enable NFS and add an access rule for that folder: host = the VM's IP only, read/write, **no root squash**. The backup job runs as root and must be able to read every file.
-3. Note the export path the NAS shows, for example `/nextcloud` or `/share/nextcloud`.
+1. *Control Panel → Network & File Services → Win/Mac/NFS/WebDAV*, tab *NFS Service*: tick **Enable NFS v2/v3 service** and **Enable NFS v4 service**, then *Apply*.
+2. *Control Panel → Privilege → Shared Folders*: create a folder called `nextcloud`.
+3. Select it, click *Edit Shared Folder Permission* and set *Select permission type* to **NFS host access**. Tick *Access right*, add the VM's IP `192.168.0.54`, choose **Read/Write** and squash option **Squash no users**. *Apply*.
+4. Optional: in the snapshot settings of this folder, hide the snapshot directory. Otherwise a folder `@Recently-Snapshot` appears inside Nextcloud's data folder. That is harmless, but never delete it.
 
-**On the VM** (admin account), mount the share and give it to the container's web user, `www-data` (uid 33):
+**On the VM**, run these one at a time from your admin account.
+
+Install the NFS client:
 
 ```bash
 sudo apt install -y nfs-common
+```
+
+Check that the QNAP offers the share (should list `/nextcloud`):
+
+```bash
+showmount -e 192.168.0.249
+```
+
+Add the share to `/etc/fstab`:
+
+```bash
 echo "192.168.0.249:/nextcloud /home/nextcloud/nextcloud-data nfs4 rw,hard,noatime,_netdev 0 0" | sudo tee -a /etc/fstab
-sudo systemctl daemon-reload && sudo mount -a
-df -h /home/nextcloud/nextcloud-data      # must show the NAS
+```
+
+Mount it:
+
+```bash
+sudo systemctl daemon-reload
+sudo mount -a
+```
+
+Check that it is mounted (must show `192.168.0.249:/nextcloud`):
+
+```bash
+df -h /home/nextcloud/nextcloud-data
+```
+
+Give the folder to the container's web user, `www-data` (uid 33):
+
+```bash
 sudo chown 33:33 /home/nextcloud/nextcloud-data
 sudo chmod 750 /home/nextcloud/nextcloud-data
 ```
+
+Test that Nextcloud can write to it. Test through Docker: a plain `sudo -u '#33' touch` fails because uid 33 cannot pass through your home folder, which says nothing about the share.
+
+```bash
+docker run --rm -u 33:33 -v /home/nextcloud/nextcloud-data:/data alpine touch /data/test
+```
+
+```bash
+sudo ls -ln /home/nextcloud/nextcloud-data
+```
+
+```bash
+sudo rm /home/nextcloud/nextcloud-data/test
+```
+
+The `ls` must show `test` owned by `33 33`.
 
 Make Docker wait for the share at boot, so Nextcloud never starts against an empty folder:
 
@@ -125,7 +173,7 @@ Fill in at least these values:
 | `NEXTCLOUD_ADMIN_PASSWORD` | Password 1 (or your own strong password) |
 | `POSTGRES_PASSWORD` | Password 2 |
 | `REDIS_PASSWORD` | Password 3 |
-| `NEXTCLOUD_TRUSTED_DOMAINS` | `192.168.0.30` (the VM's IP; add your domain later, see NGINX-PROXY.md) |
+| `NEXTCLOUD_TRUSTED_DOMAINS` | `192.168.0.54` (the VM's IP; add your domain later, see NGINX-PROXY.md) |
 | `NEXTCLOUD_DATA_PATH` | `/home/nextcloud/nextcloud-data` |
 | `NEXTCLOUD_PORT` | `8080` (the port Nextcloud listens on at the VM) |
 
@@ -139,7 +187,7 @@ docker compose up -d
 docker compose logs -f nextcloud     # first install takes 1–3 minutes; Ctrl+C to stop watching
 ```
 
-**3. Open** `http://192.168.0.30:8080` in a browser on your LAN and log in with `NEXTCLOUD_ADMIN_USER` and `NEXTCLOUD_ADMIN_PASSWORD`.
+**3. Open** `http://192.168.0.54:8080` in a browser on your LAN and log in with `NEXTCLOUD_ADMIN_USER` and `NEXTCLOUD_ADMIN_PASSWORD`.
 
 The admin account and trusted domains in `.env` are only read on the very first install. To change them later, use `occ` (Part 4).
 
@@ -235,7 +283,59 @@ Nextcloud can only move up one major version at a time. Once it runs, pin `NEXTC
 | Stack does not start after a reboot | NAS share not mounted | Start the NAS, run `sudo mount -a`, check `df -h /home/nextcloud/nextcloud-data` |
 | Nextcloud cannot write files | NAS folder not owned by uid 33 | `sudo chown 33:33 /home/nextcloud/nextcloud-data` (add `-R` if files exist) |
 | Backup: permission denied | NFS rule uses root squash | Set no root squash for the VM's IP on the NAS |
+| "Your data directory is invalid. Ensure there is a file called .ocdata" | The first install ran before the share was mounted or writable | Start over, see below |
+| `sudo mount -a` hangs | Wrong NAS address in `/etc/fstab`, or NFS off on the QNAP | Ctrl+C; check the fstab line uses `192.168.0.249`; check the QNAP NFS service |
+| `showmount`: program not registered | NFS v2/v3 service off on the QNAP | Tick *Enable NFS v2/v3 service* (Part 2, step 1) |
+| Root can write to the share, uid 33 cannot | Usually a test artefact: uid 33 cannot enter your home folder | Use the Docker write test from Part 2 |
 | Backup failed | Storage Box key, space or NAS mount | `journalctl -u nextcloud-backup`; if needed `occ maintenance:mode --off` |
 | Port 8080 already in use | Another service on the VM | Change `NEXTCLOUD_PORT` in `.env` and run `docker compose up -d` |
 
 Useful checks: `docker compose ps`, `docker compose logs --tail=100 nextcloud`, `occ status`.
+
+**Start over after a failed first install.** Only on a fresh install: this deletes the Nextcloud database and app files. Run one at a time.
+
+```bash
+cd ~/nextcloud-proxmox
+```
+
+```bash
+docker compose down -v
+```
+
+```bash
+sudo ls -la /home/nextcloud/nextcloud-data
+```
+
+Delete the leftovers, keeping the QNAP snapshot folder:
+
+```bash
+sudo find /home/nextcloud/nextcloud-data -mindepth 1 -maxdepth 1 ! -name '@Recently-Snapshot' -exec rm -rf {} +
+```
+
+```bash
+sudo chown 33:33 /home/nextcloud/nextcloud-data
+```
+
+```bash
+sudo chmod 750 /home/nextcloud/nextcloud-data
+```
+
+Check `NEXTCLOUD_TRUSTED_DOMAINS=192.168.0.54` in `.env`:
+
+```bash
+nano .env
+```
+
+```bash
+docker compose up -d
+```
+
+```bash
+docker compose logs -f nextcloud
+```
+
+When the log is quiet (Ctrl+C), check that the install wrote `.ocdata` and an `appdata_…` folder:
+
+```bash
+sudo ls -la /home/nextcloud/nextcloud-data
+```
