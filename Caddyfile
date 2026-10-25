@@ -1,10 +1,17 @@
 {
 	email {$ACME_EMAIL}
 
-	# Pass the real client IP to Nextcloud (both options under rootless Docker).
-	# Option A: also restrict the router's 443 forward to Cloudflare's IP ranges.
+	# Pass the real client IP to Nextcloud. Uncomment ONE block:
+	#
+	# Option B (Cloudflare Tunnel): cloudflared reaches Caddy from the Docker network
 	# servers {
 	# 	trusted_proxies static private_ranges
+	# 	client_ip_headers CF-Connecting-IP X-Forwarded-For
+	# }
+	#
+	# Option A (port forward): needs the caddy-cloudflare-ip module in caddy/Dockerfile
+	# servers {
+	# 	trusted_proxies cloudflare
 	# 	client_ip_headers CF-Connecting-IP X-Forwarded-For
 	# }
 }

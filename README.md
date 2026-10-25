@@ -1,6 +1,6 @@
 # nextcloud-proxmox
 
-Nextcloud on an Ubuntu VM (Proxmox) behind Caddy, published through a Cloudflare domain. Docker runs rootless under a dedicated `nextcloud` user, user files live on a NAS over NFS, and restic sends nightly backups to a Hetzner Storage Box.
+Nextcloud on an Ubuntu VM (Proxmox) behind Caddy, published through a Cloudflare domain. The stack runs under a dedicated `nextcloud` user, user files live on a NAS over NFS, and restic sends nightly backups to a Hetzner Storage Box.
 
 ```
 Visitor ─▶ Cloudflare ─▶ (A) router :443  ─┐
@@ -9,7 +9,7 @@ Visitor ─▶ Cloudflare ─▶ (A) router :443  ─┐
                                          NAS (NFS) ◀──────┘     restic ─▶ Hetzner Storage Box
 ```
 
-- **Rootless Docker:** the daemon and all containers run as the unprivileged `nextcloud` user; no root daemon, nobody in the `docker` group.
+- **Dedicated user:** the stack lives in `/home/nextcloud` and the `nextcloud` user (in the `docker` group) runs all `docker compose` commands.
 - **Caddy** gets Let's Encrypt certificates via the Cloudflare DNS API (DNS-01); no port 80.
 - **Exposure:** option A = port forward 443 + proxied A record; option B = Cloudflare Tunnel (`--profile tunnel`), no open ports.
 - **Data:** user files on a NAS share mounted at `/home/nextcloud/nextcloud-data`; database and Redis stay on the VM disk.
@@ -20,27 +20,22 @@ Visitor ─▶ Cloudflare ─▶ (A) router :443  ─┐
 | Path | Goes to | Purpose |
 | --- | --- | --- |
 | `docker-compose.yml`, `Caddyfile`, `caddy/Dockerfile`, `env.example` | `/home/nextcloud/nextcloud-stack/` | The stack |
-| `scripts/nextcloud-backup.sh` | `/usr/local/sbin/` (mode 700) | Nightly backup job (runs as root, talks to the rootless daemon) |
+| `scripts/nextcloud-backup.sh` | `/usr/local/sbin/` (mode 700) | Nightly backup job (runs as root) |
 | `scripts/restic.env.example` | `/root/.restic.env` | restic repository settings |
 | `scripts/ssh-config.example` | append to `/root/.ssh/config` | Storage Box SSH alias |
 | `systemd/nextcloud-backup.{service,timer}` | `/etc/systemd/system/` | Schedule, 03:00 nightly |
-| `systemd/user@.service.d/nas.conf` | `/etc/systemd/system/user@<uid of nextcloud>.service.d/` | `nextcloud`'s session (and Docker) waits for the NAS mount |
+| `systemd/docker.service.d/nas.conf` | `/etc/systemd/system/docker.service.d/` | Docker waits for the NAS mount |
 
 ## Quick start
 
 ```bash
-# 0. As your admin user: Docker (from Docker's apt repo) + rootless prerequisites
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
-  docker-ce-rootless-extras uidmap dbus-user-session systemd-container nfs-common
+# 0. As your admin user: Docker (from Docker's apt repo) and the nextcloud user
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin nfs-common
 sudo adduser --disabled-password --gecos "" nextcloud
-sudo systemctl disable --now docker.service docker.socket && sudo rm -f /var/run/docker.sock
-sudo loginctl enable-linger nextcloud
-echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-rootless-ports.conf && sudo sysctl --system
+sudo usermod -aG docker nextcloud
 
-# 1. As nextcloud: rootless daemon + stack
-sudo machinectl shell nextcloud@
-dockerd-rootless-setuptool.sh install
-echo "export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock" >> ~/.bashrc && . ~/.bashrc
+# 1. As nextcloud: get the stack
+sudo -iu nextcloud
 git clone https://github.com/rnvegter/nextcloud-proxmox ~/nextcloud-stack   # private repo: sign in with a token or deploy key
 mkdir -p ~/nextcloud-data
 exit
@@ -48,15 +43,13 @@ exit
 # 2. As your admin user: NAS share (NFS, rw, no root squash, VM IP only)
 echo "NAS-IP:/nextcloud /home/nextcloud/nextcloud-data nfs4 rw,hard,noatime,_netdev 0 0" | sudo tee -a /etc/fstab
 sudo systemctl daemon-reload && sudo mount -a
-WWW_UID=$(( $(grep ^nextcloud: /etc/subuid | cut -d: -f2) + 32 ))   # rootless-mapped www-data, usually 100032
-WWW_GID=$(( $(grep ^nextcloud: /etc/subgid | cut -d: -f2) + 32 ))
-sudo chown "$WWW_UID:$WWW_GID" /home/nextcloud/nextcloud-data && sudo chmod 750 /home/nextcloud/nextcloud-data
-sudo install -D -m 644 /home/nextcloud/nextcloud-stack/systemd/user@.service.d/nas.conf \
-  /etc/systemd/system/user@$(id -u nextcloud).service.d/nas.conf
+sudo chown 33:33 /home/nextcloud/nextcloud-data && sudo chmod 750 /home/nextcloud/nextcloud-data
+sudo install -D -m 644 /home/nextcloud/nextcloud-stack/systemd/docker.service.d/nas.conf \
+  /etc/systemd/system/docker.service.d/nas.conf
 sudo systemctl daemon-reload
 
 # 3. As nextcloud: configure and start
-sudo machinectl shell nextcloud@
+sudo -iu nextcloud
 cd ~/nextcloud-stack
 cp env.example .env && chmod 600 .env      # fill in DOMAIN, CF_API_TOKEN, secrets
 docker compose config -q
@@ -75,7 +68,7 @@ Before step 4, set up the Storage Box SSH key, `/root/.restic.env`, the restic p
 
 ## Full manual
 
-The step-by-step manual (moving DNS from any registrar to Cloudflare, API token, rootless Docker under the `nextcloud` user, port forward vs tunnel, Cloudflare settings, Nextcloud hardening, Storage Box setup, restores and troubleshooting) is in [docs/MANUAL.md](docs/MANUAL.md).
+The step-by-step manual (moving DNS from any registrar to Cloudflare, API token, the `nextcloud` user, port forward vs tunnel, Cloudflare settings, Nextcloud hardening, Storage Box setup, restores and troubleshooting) is in [docs/MANUAL.md](docs/MANUAL.md).
 
 ## Secrets
 
