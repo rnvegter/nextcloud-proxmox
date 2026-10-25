@@ -1,11 +1,11 @@
 # nextcloud-proxmox
 
-The standard Nextcloud Docker stack for an Ubuntu VM (Proxmox), configured from one `.env` file. User files live on a QNAP NAS over SMB, and restic sends nightly backups to a Hetzner Storage Box. For access from the internet, an nginx reverse proxy on another machine sits in front.
+The standard Nextcloud Docker stack for an Ubuntu VM (Proxmox), configured from one `.env` file. User files live on a NAS over NFS, and restic sends nightly backups to a Hetzner Storage Box. For access from the internet, an nginx reverse proxy on another machine sits in front.
 
 ```
 Visitor ─▶ router ─▶ nginx proxy (other machine, HTTPS) ─▶ VM :8080 ─▶ nextcloud ─▶ Postgres / Redis / cron
                                                                          │
-                                                       QNAP (SMB) ◀──────┘      restic ─▶ Hetzner Storage Box
+                                                       NAS (NFS) ◀───────┘      restic ─▶ Hetzner Storage Box
 ```
 
 | Container | Image | Job |
@@ -46,7 +46,7 @@ Then open `http://<VM-IP>:8080`.
 
 ## Documentation
 
-- [docs/MANUAL.md](docs/MANUAL.md): full setup, QNAP SMB share, first settings, backups, updates and troubleshooting.
+- [docs/MANUAL.md](docs/MANUAL.md): full setup, NAS share, first settings, backups, updates and troubleshooting.
 - [docs/NGINX-PROXY.md](docs/NGINX-PROXY.md): connecting the stack to an nginx (or Nginx Proxy Manager) proxy on another machine.
 
 ## Secrets
