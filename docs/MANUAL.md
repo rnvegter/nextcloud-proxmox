@@ -29,7 +29,7 @@ Visitor ─▶ router ─▶ nginx proxy (192.168.0.10, HTTPS) ─▶ VM 192.168
 
 Visitors from the internet only ever reach the nginx machine; Nextcloud's port 8080 stays inside your LAN.
 
-The NAS is at `192.168.0.200`. The examples use `192.168.0.30` for the VM; replace it with your VM's real address (`ip -4 addr` shows it).
+The NAS is at `192.168.0.249`. The examples use `192.168.0.30` for the VM; replace it with your VM's real address (`ip -4 addr` shows it).
 
 **Prerequisites**
 
@@ -87,7 +87,7 @@ Nextcloud keeps user files on an NFS share from the NAS. The database and Nextcl
 
 ```bash
 sudo apt install -y nfs-common
-echo "192.168.0.200:/nextcloud /home/nextcloud/nextcloud-data nfs4 rw,hard,noatime,_netdev 0 0" | sudo tee -a /etc/fstab
+echo "192.168.0.249:/nextcloud /home/nextcloud/nextcloud-data nfs4 rw,hard,noatime,_netdev 0 0" | sudo tee -a /etc/fstab
 sudo systemctl daemon-reload && sudo mount -a
 df -h /home/nextcloud/nextcloud-data      # must show the NAS
 sudo chown 33:33 /home/nextcloud/nextcloud-data
