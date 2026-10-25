@@ -17,7 +17,7 @@ The stack has four containers:
 
 Around it:
 
-- A Linux user called `nextcloud` owns the stack in `/home/nextcloud/nextcloud-stack` and runs the `docker compose` commands.
+- A Linux user called `nextcloud` owns the stack in `/home/nextcloud/nextcloud-proxmox` and runs the `docker compose` commands.
 - User files live on the NAS, mounted over NFS at `/home/nextcloud/nextcloud-data`.
 - A nightly restic job backs up files, database and config to a Hetzner Storage Box.
 
@@ -68,7 +68,7 @@ The `docker` group gives admin-level control over Docker, so the account gets no
 
 ```bash
 sudo -iu nextcloud
-git clone https://github.com/rnvegter/nextcloud-proxmox ~/nextcloud-stack   # private repo: sign in with a token
+git clone https://github.com/rnvegter/nextcloud-proxmox ~/nextcloud-proxmox   # private repo: sign in with a token
 mkdir -p ~/nextcloud-data                                                     # mount point for the NAS
 exit
 ```
@@ -97,7 +97,7 @@ sudo chmod 750 /home/nextcloud/nextcloud-data
 Make Docker wait for the share at boot, so Nextcloud never starts against an empty folder:
 
 ```bash
-sudo install -D -m 644 /home/nextcloud/nextcloud-stack/systemd/docker.service.d/nas.conf \
+sudo install -D -m 644 /home/nextcloud/nextcloud-proxmox/systemd/docker.service.d/nas.conf \
   /etc/systemd/system/docker.service.d/nas.conf
 sudo systemctl daemon-reload
 ```
@@ -112,7 +112,7 @@ Everything here runs as the `nextcloud` user.
 
 ```bash
 sudo -iu nextcloud
-cd ~/nextcloud-stack
+cd ~/nextcloud-proxmox
 cp env.example .env && chmod 600 .env
 for i in 1 2 3; do openssl rand -hex 24; done   # three random passwords
 nano .env
@@ -145,7 +145,7 @@ The admin account and trusted domains in `.env` are only read on the very first 
 
 ## Part 4: First login and basic settings
 
-Open *Administration settings → Overview* and work through any warnings. The commands below clear the usual ones. Run them as `nextcloud` in `~/nextcloud-stack`:
+Open *Administration settings → Overview* and work through any warnings. The commands below clear the usual ones. Run them as `nextcloud` in `~/nextcloud-proxmox`:
 
 ```bash
 occ() { docker compose exec -u www-data nextcloud php occ "$@"; }
@@ -173,7 +173,7 @@ Run everything below from your admin account.
 sudo -i
 ssh-keygen -t ed25519 -f /root/.ssh/storagebox -N ""
 ssh-copy-id -p 23 -s -i /root/.ssh/storagebox.pub uXXXXX@uXXXXX.your-storagebox.de   # asks the password once
-cat /home/nextcloud/nextcloud-stack/scripts/ssh-config.example >> /root/.ssh/config     # then edit uXXXXX
+cat /home/nextcloud/nextcloud-proxmox/scripts/ssh-config.example >> /root/.ssh/config     # then edit uXXXXX
 chmod 600 /root/.ssh/config
 sftp storagebox      # must log in without a password; type 'bye'
 ```
@@ -183,7 +183,7 @@ sftp storagebox      # must log in without a password; type 'bye'
 ```bash
 apt install -y restic
 openssl rand -hex 32 > /root/.restic-pass && chmod 600 /root/.restic-pass
-install -m 600 /home/nextcloud/nextcloud-stack/scripts/restic.env.example /root/.restic.env
+install -m 600 /home/nextcloud/nextcloud-proxmox/scripts/restic.env.example /root/.restic.env
 set -a; . /root/.restic.env; set +a
 restic init
 exit
@@ -194,7 +194,7 @@ exit
 **4. Install the script and the timer:**
 
 ```bash
-S=/home/nextcloud/nextcloud-stack
+S=/home/nextcloud/nextcloud-proxmox
 sudo install -m 700 $S/scripts/nextcloud-backup.sh /usr/local/sbin/
 sudo install -m 644 $S/systemd/nextcloud-backup.service $S/systemd/nextcloud-backup.timer /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -220,7 +220,7 @@ To restore everything onto a fresh VM: repeat Parts 1 and 2 and the restic setup
 
 ```bash
 sudo -iu nextcloud
-cd ~/nextcloud-stack
+cd ~/nextcloud-proxmox
 git pull                  # newer stack files, if any
 docker compose pull
 docker compose up -d

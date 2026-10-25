@@ -2,7 +2,7 @@
 # Nightly Nextcloud backup to a Hetzner Storage Box with restic.
 # Install: sudo install -m 700 scripts/nextcloud-backup.sh /usr/local/sbin/
 set -euo pipefail
-STACK=/home/nextcloud/nextcloud-stack   # runs as root, so no ~
+STACK=/home/nextcloud/nextcloud-proxmox   # runs as root, so no ~
 STAGE=/var/backups/nextcloud
 cd "$STACK"
 set -a; . ./.env; . /root/.restic.env; set +a

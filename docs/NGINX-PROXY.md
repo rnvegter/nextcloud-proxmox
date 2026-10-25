@@ -25,7 +25,7 @@ Apply them and add the domain as trusted:
 
 ```bash
 sudo -iu nextcloud
-cd ~/nextcloud-stack
+cd ~/nextcloud-proxmox
 docker compose up -d
 docker compose exec -u www-data nextcloud php occ config:system:set trusted_domains 1 --value=cloud.example.com
 ```

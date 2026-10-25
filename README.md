@@ -19,7 +19,7 @@ Visitor ─▶ router ─▶ nginx proxy (other machine, HTTPS) ─▶ VM :8080 
 
 | Path | Goes to | Purpose |
 | --- | --- | --- |
-| `docker-compose.yml`, `env.example` | `/home/nextcloud/nextcloud-stack/` | The stack |
+| `docker-compose.yml`, `env.example` | `/home/nextcloud/nextcloud-proxmox/` | The stack |
 | `systemd/docker.service.d/nas.conf` | `/etc/systemd/system/docker.service.d/` | Docker waits for the NAS mount |
 | `scripts/nextcloud-backup.sh` | `/usr/local/sbin/` (mode 700) | Nightly backup job |
 | `scripts/restic.env.example` | `/root/.restic.env` | restic repository settings |
@@ -35,9 +35,9 @@ sudo usermod -aG docker nextcloud
 
 # As nextcloud: get the stack, configure, start
 sudo -iu nextcloud
-git clone https://github.com/rnvegter/nextcloud-proxmox ~/nextcloud-stack
+git clone https://github.com/rnvegter/nextcloud-proxmox ~/nextcloud-proxmox
 mkdir -p ~/nextcloud-data          # mount the NAS here first (see the manual)
-cd ~/nextcloud-stack
+cd ~/nextcloud-proxmox
 cp env.example .env && chmod 600 .env && nano .env
 docker compose up -d
 ```
