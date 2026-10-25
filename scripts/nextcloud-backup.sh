@@ -22,7 +22,8 @@ restic backup --tag nextcloud \
   "$STAGE" "$NEXTCLOUD_DATA_PATH" "$STACK" \
   "$HTML/config" "$HTML/custom_apps" "$HTML/themes" \
   --exclude "$NEXTCLOUD_DATA_PATH/*/cache" \
-  --exclude "$NEXTCLOUD_DATA_PATH/appdata_*/preview"
+  --exclude "$NEXTCLOUD_DATA_PATH/appdata_*/preview" \
+  --exclude "$NEXTCLOUD_DATA_PATH/@Recently-Snapshot"
 
 # 3. Retention: 7 daily, 4 weekly, 6 monthly
 restic forget --tag nextcloud --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune
