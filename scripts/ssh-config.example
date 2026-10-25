@@ -1,0 +1,6 @@
+# Append to /root/.ssh/config and chmod 600. Replace uXXXXX with your Storage Box (sub-)account.
+Host storagebox
+    HostName uXXXXX.your-storagebox.de
+    User uXXXXX
+    Port 23
+    IdentityFile /root/.ssh/storagebox

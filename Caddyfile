@@ -1,0 +1,35 @@
+{
+	email {$ACME_EMAIL}
+
+	# Pass the real client IP to Nextcloud. Uncomment ONE block:
+	#
+	# Option B (Cloudflare Tunnel): cloudflared reaches Caddy from the Docker network
+	# servers {
+	# 	trusted_proxies static private_ranges
+	# 	client_ip_headers CF-Connecting-IP X-Forwarded-For
+	# }
+	#
+	# Option A (port forward): needs the caddy-cloudflare-ip module in caddy/Dockerfile
+	# servers {
+	# 	trusted_proxies cloudflare
+	# 	client_ip_headers CF-Connecting-IP X-Forwarded-For
+	# }
+}
+
+{$DOMAIN} {
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	redir /.well-known/carddav /remote.php/dav/ 301
+	redir /.well-known/caldav /remote.php/dav/ 301
+
+	reverse_proxy nextcloud:80
+}

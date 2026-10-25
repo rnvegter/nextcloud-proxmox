@@ -1,0 +1,6 @@
+# Secrets and local state never go into git
+.env
+*.env
+!env.example
+restic.env
+.restic-pass
