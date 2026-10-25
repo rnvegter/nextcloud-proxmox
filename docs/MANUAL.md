@@ -8,8 +8,9 @@ This manual takes a domain bought at any registrar, moves its DNS to Cloudflare,
 
 The stack runs on one Ubuntu VM with Docker Compose:
 
+- **Docker runs rootless** under a dedicated Linux user called `nextcloud`. The daemon and every container run with that user's rights, never as root on the host. The stack lives in its home, `/home/nextcloud`.
 - **Caddy** terminates HTTPS and gets Let's Encrypt certificates through the Cloudflare DNS API (DNS-01), so port 80 is never needed.
-- **Nextcloud** (Apache image) sits behind Caddy with no published ports. All user files live on an external NAS, mounted over NFS at `~/nextcloud-data`.
+- **Nextcloud** (Apache image) sits behind Caddy with no published ports. All user files live on an external NAS, mounted over NFS at `/home/nextcloud/nextcloud-data`.
 - **Postgres**, **Redis** and a **cron** worker live on an internal network with no route to the internet. Their data stays on the VM's own disk.
 - **cloudflared** is optional and only runs for option B.
 - **restic** runs on the VM host every night and sends encrypted, deduplicated backups of user files, database and configuration to a **Hetzner Storage Box** (Part 8).
@@ -101,12 +102,45 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
   https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
   | sudo tee /etc/apt/sources.list.d/docker.list
 sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-sudo usermod -aG docker $USER   # log out and back in
-docker compose version          # check
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
+  docker-ce-rootless-extras uidmap dbus-user-session systemd-container
 ```
 
-If Docker is already installed, just confirm `docker compose version` prints v2.x.
+Do not add your own account to the `docker` group; membership of that group is effectively root access.
+
+**Create the `nextcloud` user and switch Docker to rootless mode.** A normal Docker daemon runs as root, and so does every container it starts. In rootless mode the daemon runs as an ordinary user, and root inside a container maps to an unprivileged range of host UIDs. A container break-out then lands as a user with no rights on the VM. Run these from your own admin account:
+
+```bash
+sudo adduser --disabled-password --gecos "" nextcloud
+grep ^nextcloud: /etc/subuid /etc/subgid       # both must show a range of 65536 IDs
+sudo systemctl disable --now docker.service docker.socket   # no root daemon
+sudo rm -f /var/run/docker.sock
+sudo loginctl enable-linger nextcloud           # its Docker starts at boot, without a login
+echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-rootless-ports.conf
+sudo sysctl --system                            # lets the rootless daemon publish port 443
+```
+
+Then open a full login session as `nextcloud` and set up its own Docker daemon. Use `machinectl`, not `sudo su`: rootless Docker cannot find the user's systemd session through `su`.
+
+```bash
+sudo machinectl shell nextcloud@
+dockerd-rootless-setuptool.sh install
+echo "export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock" >> ~/.bashrc
+. ~/.bashrc
+docker info | grep -i rootless                  # must print rootless
+docker compose version
+exit
+```
+
+On Ubuntu 24.04, rootless Docker needs an AppArmor profile for `rootlesskit`; the `docker-ce-rootless-extras` package from Docker's repository installs it.
+
+**From here on, `~` means `/home/nextcloud`, and every `docker compose` command runs as the `nextcloud` user** in a shell opened with `sudo machinectl shell nextcloud@`. Steps that need `sudo` run from your admin account; they say so.
+
+Three things work differently in rootless mode:
+
+- **UIDs on the host.** Container user `www-data` (uid 33) appears on the host as the first subordinate UID of `nextcloud` plus 32, usually `100032`. Files Nextcloud writes on the NAS carry that number.
+- **Docker's own data** (images, volumes) lives in `/home/nextcloud/.local/share/docker` instead of `/var/lib/docker`. Keep it on the VM's disk, never on NFS.
+- **Published ports hide the visitor's IP.** Caddy sees an internal address for traffic that arrives through a published port. This only matters for option A; Part 7 covers it.
 
 **Firewall.** Ports that Docker publishes bypass `ufw`, so `ufw` rules do not protect them. Control exposure with the `CADDY_HTTPS_BIND` setting and the router instead. Still use `ufw` for SSH:
 
@@ -118,7 +152,9 @@ sudo ufw enable
 **Folders.**
 
 ```bash
+sudo machinectl shell nextcloud@
 mkdir -p ~/nextcloud-stack/caddy ~/nextcloud-data   # stack folder and NAS mount point
+exit
 ```
 
 **User files on the NAS.** Nextcloud keeps user files on an NFS share from the NAS, mounted at `~/nextcloud-data`. The database, Redis and Nextcloud's own code stay on the VM's disk; never put the Postgres data on a network share. The examples use `192.168.1.20` for the NAS and `/nextcloud` as the export path; use your own.
@@ -130,22 +166,27 @@ On the NAS:
 3. Enable the NFS service (NFSv4 if offered) and add an NFS access rule for that folder: host = the VM's IP only, read/write, **no root squash** (some NAS menus call it "no mapping"). Root on the VM needs full access to set ownership and to let the backup job read every user's files. Limiting the rule to the VM's IP keeps that contained.
 4. Note the export path the NAS shows; depending on the model it is `/nextcloud` or `/share/nextcloud`.
 
-On the VM, mount it and hand it to the container's `www-data` user (uid 33):
+On the VM, from your admin account, mount the share and give it to the container's `www-data` user. Because of the rootless UID mapping, that is not uid 33 on the host but the mapped number:
 
 ```bash
 sudo apt install -y nfs-common
-echo "192.168.1.20:/nextcloud $HOME/nextcloud-data nfs4 rw,hard,noatime,_netdev 0 0" | sudo tee -a /etc/fstab
+echo "192.168.1.20:/nextcloud /home/nextcloud/nextcloud-data nfs4 rw,hard,noatime,_netdev 0 0" | sudo tee -a /etc/fstab
 sudo systemctl daemon-reload && sudo mount -a
-df -h ~/nextcloud-data                     # must show the NAS, not the VM disk
-sudo chown 33:33 ~/nextcloud-data && sudo chmod 750 ~/nextcloud-data
+df -h /home/nextcloud/nextcloud-data          # must show the NAS, not the VM disk
+WWW_UID=$(( $(grep ^nextcloud: /etc/subuid | cut -d: -f2) + 32 ))
+WWW_GID=$(( $(grep ^nextcloud: /etc/subgid | cut -d: -f2) + 32 ))
+echo "$WWW_UID:$WWW_GID"                       # usually 100032:100032
+sudo chown "$WWW_UID:$WWW_GID" /home/nextcloud/nextcloud-data
+sudo chmod 750 /home/nextcloud/nextcloud-data
 ```
 
-Make Docker wait for the share at boot, so Nextcloud never starts against the empty mount point (also in this repo as `systemd/docker.service.d/nas.conf`):
+Make the `nextcloud` user's session, and with it its Docker daemon, wait for the share at boot, so Nextcloud never starts against the empty mount point (also in this repo as `systemd/user@.service.d/nas.conf`):
 
 ```bash
-sudo mkdir -p /etc/systemd/system/docker.service.d
-printf '[Unit]\nRequiresMountsFor=%s\n' "$HOME/nextcloud-data" \
-  | sudo tee /etc/systemd/system/docker.service.d/nas.conf
+NC_UID=$(id -u nextcloud)
+sudo mkdir -p /etc/systemd/system/user@$NC_UID.service.d
+printf '[Unit]\nRequiresMountsFor=/home/nextcloud/nextcloud-data\n' \
+  | sudo tee /etc/systemd/system/user@$NC_UID.service.d/nas.conf
 sudo systemctl daemon-reload
 ```
 
@@ -154,20 +195,21 @@ If the NAS is off, Docker now waits for it instead of starting the stack. That i
 Copy the stack files (or clone this repository) so the layout is:
 
 ```
-~/nextcloud-stack/          (= /home/<your-user>/nextcloud-stack)
+~/nextcloud-stack/          (= /home/nextcloud/nextcloud-stack)
 ├── docker-compose.yml
 ├── env.example
 ├── Caddyfile
 └── caddy/Dockerfile
 ```
 
-Run all `docker compose` commands as your normal user from this folder (your user is in the `docker` group). Both the stack and the user files sit in your home directory: the stack in `~/nextcloud-stack`, the files on the NAS mount at `~/nextcloud-data`. The backup job in Part 8 runs as root, where `~` means `/root`, so it uses full paths such as `/home/youruser/nextcloud-stack`.
+Everything sits in the `nextcloud` user's home: the stack in `~/nextcloud-stack`, the user files on the NAS mount at `~/nextcloud-data`. Run all `docker compose` commands as `nextcloud` from the stack folder. The backup job in Part 8 runs as root, where `~` means `/root`, so it uses full paths under `/home/nextcloud`.
 
 ## Part 4: Configure and start the stack
 
 **1. Create `.env`.**
 
 ```bash
+sudo machinectl shell nextcloud@     # everything in Part 4 runs as nextcloud
 cd ~/nextcloud-stack
 cp env.example .env && chmod 600 .env
 for i in 1 2 3; do openssl rand -hex 24; done   # three secrets
@@ -183,7 +225,7 @@ Hex secrets avoid characters such as `$` that Compose would try to interpolate. 
 | `NEXTCLOUD_ADMIN_PASSWORD` | Secret 1 (or your own strong password) |
 | `POSTGRES_PASSWORD` | Secret 2 |
 | `REDIS_PASSWORD` | Secret 3 |
-| `NEXTCLOUD_DATA_PATH` | `/home/youruser/nextcloud-data` |
+| `NEXTCLOUD_DATA_PATH` | `/home/nextcloud/nextcloud-data` |
 | `CADDY_HTTPS_BIND` | `443` for option A, `127.0.0.1:443` for option B |
 | `CF_TUNNEL_TOKEN` | Option B only, filled in Part 5B |
 
@@ -322,7 +364,7 @@ occ config:system:set maintenance_window_start --type=integer --value=1   # 01:0
 occ config:system:set trusted_domains 1 --value=new.example.com
 ```
 
-**Pass the real client IP through.** Without this, Nextcloud logs and brute-force protection see Cloudflare or Docker addresses instead of the visitor. Nextcloud already trusts Caddy (`TRUSTED_PROXIES`); Caddy must also trust Cloudflare. The `Caddyfile` in this repository has both blocks below commented out in its global options; uncomment one.
+**Pass the real client IP through.** Without this, Nextcloud logs and brute-force protection see Cloudflare or Docker addresses instead of the visitor. Nextcloud already trusts Caddy (`TRUSTED_PROXIES`); Caddy must also trust Cloudflare. The `Caddyfile` in this repository has this block commented out in its global options; uncomment it.
 
 Option B (tunnel), where `cloudflared` reaches Caddy from the Docker network:
 
@@ -336,19 +378,9 @@ Option B (tunnel), where `cloudflared` reaches Caddy from the Docker network:
 }
 ```
 
-Option A (port forward), where requests come from Cloudflare's public ranges. Add the module `--with github.com/WeidiDeng/caddy-cloudflare-ip` to the `xcaddy build` line in `caddy/Dockerfile`, then:
+Option A (port forward): rootless Docker's port forwarding replaces the visitor's address with an internal one, so Caddy sees every request arriving from a private address, never from Cloudflare's ranges. Use the same block as option B, so Caddy takes the client IP from Cloudflare's `CF-Connecting-IP` header. Because that header could be forged by anyone who reaches your public IP directly, restrict the 443 port forward on the router to Cloudflare's IP ranges ([cloudflare.com/ips](https://www.cloudflare.com/ips/)) when you use option A.
 
-```
-{
-	email {$ACME_EMAIL}
-	servers {
-		trusted_proxies cloudflare
-		client_ip_headers CF-Connecting-IP X-Forwarded-For
-	}
-}
-```
-
-The module fetches Cloudflare's current IP list itself. Apply with `docker compose up -d --build caddy`. Check under *Administration → Logging* (or *Security → Devices & sessions*) that your own public IP appears.
+Apply with `docker compose up -d --build caddy` (as `nextcloud`). Check under *Administration → Logging* (or *Security → Devices & sessions*) that your own public IP appears.
 
 **Account security.**
 
@@ -362,10 +394,10 @@ A nightly restic job on the VM backs up the user files, a database dump, Nextclo
 
 | What | Where on the VM | How |
 | --- | --- | --- |
-| User files | `/home/youruser/nextcloud-data` (NAS) | Read directly by restic |
+| User files | `/home/nextcloud/nextcloud-data` (NAS) | Read directly by restic |
 | Database | `/var/backups/nextcloud/db.dump` | `pg_dump` in maintenance mode |
 | Nextcloud config, apps, themes | `nextcloud_html` volume | Read directly by restic |
-| Stack files and `.env` | `/home/youruser/nextcloud-stack` | Read directly by restic |
+| Stack files and `.env` | `/home/nextcloud/nextcloud-stack` | Read directly by restic |
 
 restic reads the user files from the NAS over NFS, so the VM must keep the share mounted and the NFS rule must have **no root squash**; with root squash, root on the VM is mapped to an anonymous user and cannot read folders owned by uid 33. The first run is limited by both the NAS link and your upload speed. If your NAS has its own snapshot feature, turn it on as well: it protects against accidental deletes between nightly backups.
 
@@ -414,7 +446,7 @@ restic init
 
 ### 4. Backup script
 
-The script is `scripts/nextcloud-backup.sh` in this repository. Replace `youruser` in it, then install it:
+The script is `scripts/nextcloud-backup.sh` in this repository. It points Docker commands at the `nextcloud` user's rootless daemon and reads the Nextcloud volume from `/home/nextcloud/.local/share/docker/volumes`. Install it:
 
 ```bash
 sudo install -m 700 scripts/nextcloud-backup.sh /usr/local/sbin/
@@ -451,13 +483,13 @@ set -a; . /root/.restic.env; set +a
 restic snapshots                      # one per night
 restic stats latest                   # size of the latest snapshot
 restic restore latest --target /tmp/restore-test \
-  --include /home/youruser/nextcloud-data/admin/files   # spot-check one user's files
+  --include /home/nextcloud/nextcloud-data/admin/files   # spot-check one user's files
 ```
 
 **Full restore onto a new VM**, in outline:
 
-1. Prepare the VM as in Part 3 (Docker, NAS share mounted at `~/nextcloud-data`, SSH key, restic env and password). If the NAS and its files survived, add `--exclude /home/youruser/nextcloud-data` to the restore in the next step so only the VM side comes back.
-2. `restic restore latest --target /` puts back `/home/youruser/nextcloud-data`, `/home/youruser/nextcloud-stack` (with `.env`) and the dump.
+1. Prepare the VM as in Part 3 (the nextcloud user with rootless Docker, NAS share mounted at `~/nextcloud-data`, SSH key, restic env and password). If the NAS and its files survived, add `--exclude /home/nextcloud/nextcloud-data` to the restore in the next step so only the VM side comes back. Create the `nextcloud` user first on the fresh VM so it gets the same subordinate UID range; if the mapped `www-data` number from Part 3 differs from the old one, chown the restored files to the new number.
+2. `restic restore latest --target /` puts back `/home/nextcloud/nextcloud-data`, `/home/nextcloud/nextcloud-stack` (with `.env`) and the dump.
 3. Start only the database: `docker compose up -d db`, then load the dump: `docker compose exec -T db pg_restore -U nextcloud -d nextcloud --clean --if-exists < /var/backups/nextcloud/db.dump`.
 4. Start Nextcloud once so it creates its volume, stop it, copy the restored `config`, `custom_apps` and `themes` into the volume, then start the full stack.
 5. Run `occ maintenance:data-fingerprint` and `occ files:scan --all` so clients resync cleanly.
@@ -477,15 +509,20 @@ Test a restore at least once, and set a monthly reminder to glance at `restic sn
 | "Access through untrusted domain" | Domain differs from install-time trusted domain | `occ config:system:set trusted_domains 1 --value=…` |
 | HTTP 413 on upload | Cloudflare 100 MB request cap | Use a chunking client, or DNS-only under option A |
 | Links or redirects use `http://` | Overwrite settings missing | Check `OVERWRITEPROTOCOL` and `OVERWRITEHOST` in the compose file |
-| Warnings about IP or proxy in Overview | Caddy not trusting Cloudflare | Uncomment the `servers` block from Part 7 |
+| Warnings about IP or proxy in Overview | Caddy not trusting its proxies | Uncomment the `servers` block from Part 7 |
 | Stack does not start after reboot, or "data directory invalid" | NAS share not mounted (NAS off, IP changed, NFS rule wrong) | Start the NAS, then `sudo mount -a` and check `df -h ~/nextcloud-data`; Docker starts once the share is there |
 | Backup log: permission denied on user files | NFS rule uses root squash | Set no root squash for the VM's IP on the NAS, then remount |
+| Cannot connect to the Docker daemon | Not in a `nextcloud` session, `DOCKER_HOST` unset, or switched user with `sudo su` | Use `sudo machinectl shell nextcloud@`; check `echo $DOCKER_HOST` and `systemctl --user status docker` |
+| Caddy: permission denied binding port 443 | Unprivileged-port sysctl missing | Check `sysctl net.ipv4.ip_unprivileged_port_start` (must be 443 or lower), then restart the stack |
+| Nextcloud cannot write to the data directory | NAS folder owned by uid 33 instead of the rootless-mapped number | Re-run the `WWW_UID` chown from Part 3 (add `-R` if files already exist) |
+| Stack is down after a reboot until someone logs in | Lingering not enabled for `nextcloud` | `sudo loginctl enable-linger nextcloud`, and as `nextcloud`: `systemctl --user enable docker` |
 
 Useful checks: `docker compose ps`, `docker compose logs --tail=100 <service>`, and `occ status`.
 
 **Updating.**
 
 ```bash
+sudo machinectl shell nextcloud@
 cd ~/nextcloud-stack
 docker compose pull
 docker compose up -d --build     # add --profile tunnel for option B

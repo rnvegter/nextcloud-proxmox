@@ -2,8 +2,9 @@
 # Nightly Nextcloud backup to a Hetzner Storage Box with restic.
 # Install: sudo install -m 700 scripts/nextcloud-backup.sh /usr/local/sbin/
 set -euo pipefail
-STACK=/home/youruser/nextcloud-stack   # replace youruser; runs as root, so no ~
+STACK=/home/nextcloud/nextcloud-stack   # runs as root, so no ~
 STAGE=/var/backups/nextcloud
+export DOCKER_HOST=unix:///run/user/$(id -u nextcloud)/docker.sock   # nextcloud's rootless daemon
 cd "$STACK"
 set -a; . ./.env; . /root/.restic.env; set +a
 mkdir -p "$STAGE" && chmod 700 "$STAGE"
@@ -17,7 +18,7 @@ docker compose exec -T db pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > "$
 occ maintenance:mode --off
 
 # 2. Ship everything to the Storage Box
-HTML=/var/lib/docker/volumes/${COMPOSE_PROJECT_NAME}_nextcloud_html/_data
+HTML=/home/nextcloud/.local/share/docker/volumes/${COMPOSE_PROJECT_NAME}_nextcloud_html/_data
 restic backup --tag nextcloud \
   "$STAGE" "$NEXTCLOUD_DATA_PATH" "$STACK" \
   "$HTML/config" "$HTML/custom_apps" "$HTML/themes" \
