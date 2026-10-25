@@ -18,23 +18,23 @@ The stack has four containers:
 Around it:
 
 - A Linux user called `nextcloud` owns the stack in `/home/nextcloud/nextcloud-stack` and runs the `docker compose` commands.
-- User files live on the NAS, mounted over NFS at `/home/nextcloud/nextcloud-data`.
+- User files live on the NAS, mounted over SMB at `/home/nextcloud/nextcloud-data`.
 - A nightly restic job backs up files, database and config to a Hetzner Storage Box.
 
 ```
-Visitor ─▶ router ─▶ nginx proxy (192.168.1.10, HTTPS) ─▶ VM 192.168.1.30:8080 ─▶ nextcloud ─▶ Postgres / Redis / cron
+Visitor ─▶ router ─▶ nginx proxy (192.168.0.10, HTTPS) ─▶ VM 192.168.0.30:8080 ─▶ nextcloud ─▶ Postgres / Redis / cron
                                                                                     │
-                                                                  NAS (NFS) ◀───────┘     restic ─▶ Hetzner Storage Box
+                                                                  NAS (SMB) ◀───────┘     restic ─▶ Hetzner Storage Box
 ```
 
 Visitors from the internet only ever reach the nginx machine; Nextcloud's port 8080 stays inside your LAN.
 
-The examples use `192.168.1.30` for the VM and `192.168.1.20` for the NAS; replace them with your own addresses.
+The QNAP NAS is at `192.168.0.200`. The examples use `192.168.0.30` for the VM; replace it with your VM's real address (`ip -4 addr` shows it).
 
 **Prerequisites**
 
 - An Ubuntu 22.04 or 24.04 VM with a fixed LAN IP, 2 vCPU, 4 GB RAM or more.
-- A NAS that can export an NFS share, with a fixed IP.
+- The QNAP NAS at 192.168.0.200, with Windows file sharing (SMB) switched on.
 - A Hetzner Storage Box for backups.
 - The files from this repository: `docker-compose.yml`, `env.example`, the backup script and the systemd units.
 
@@ -75,24 +75,40 @@ exit
 
 ## Part 2: User files on the NAS
 
-Nextcloud keeps user files on an NFS share from the NAS. The database and Nextcloud's own code stay on the VM's disk.
+Nextcloud keeps user files in a shared folder on the QNAP, mounted over SMB (Windows file sharing) with a QNAP username and password. The database and Nextcloud's own code stay on the VM's disk.
 
-**On the NAS:**
+**On the QNAP:**
 
-1. Create a shared folder, for example `nextcloud`.
-2. Enable NFS and add an access rule for that folder: host = the VM's IP only, read/write, **no root squash**. The backup job runs as root and must be able to read every file.
-3. Note the export path the NAS shows, for example `/nextcloud` or `/share/nextcloud`.
+1. *Control Panel → Network & File Services → Win/Mac/NFS/WebDAV*, tab *Microsoft Networking*: tick **Enable file service for Microsoft networking** and apply.
+2. *Control Panel → Privilege → Users*: create a user called `nextcloud-vm` with a strong password.
+3. *Control Panel → Privilege → Shared Folders*: create a folder called `nextcloud`. Select it, click *Edit Shared Folder Permission* and give `nextcloud-vm` **Read/Write**.
 
-**On the VM** (admin account), mount the share and give it to the container's web user, `www-data` (uid 33):
+**On the VM** (admin account), store the QNAP password in a file only root can read:
 
 ```bash
-sudo apt install -y nfs-common
-echo "192.168.1.20:/nextcloud /home/nextcloud/nextcloud-data nfs4 rw,hard,noatime,_netdev 0 0" | sudo tee -a /etc/fstab
-sudo systemctl daemon-reload && sudo mount -a
-df -h /home/nextcloud/nextcloud-data      # must show the NAS
-sudo chown 33:33 /home/nextcloud/nextcloud-data
-sudo chmod 750 /home/nextcloud/nextcloud-data
+sudo apt install -y cifs-utils
+sudo tee /root/.smb-nextcloud >/dev/null <<'EOF'
+username=nextcloud-vm
+password=YOUR_QNAP_PASSWORD
+EOF
+sudo chmod 600 /root/.smb-nextcloud
 ```
+
+Add the share to `/etc/fstab`, mount it and test that the container's web user can write to it:
+
+```bash
+echo "//192.168.0.200/nextcloud /home/nextcloud/nextcloud-data cifs credentials=/root/.smb-nextcloud,uid=33,gid=33,file_mode=0770,dir_mode=0770,vers=3.0,_netdev,nofail 0 0" | sudo tee -a /etc/fstab
+sudo systemctl daemon-reload && sudo mount -a
+df -h /home/nextcloud/nextcloud-data      # must show //192.168.0.200/nextcloud
+sudo -u '#33' touch /home/nextcloud/nextcloud-data/test && ls -l /home/nextcloud/nextcloud-data
+sudo rm /home/nextcloud/nextcloud-data/test
+```
+
+What the mount options do:
+
+- `uid=33,gid=33` makes every file on the share belong to `www-data`, the user Nextcloud runs as inside the container. No `chown` is needed (or possible) on an SMB share.
+- `file_mode=0770,dir_mode=0770` gives the permissions Nextcloud expects for its data folder.
+- `nofail` lets the VM boot even when the QNAP is off; Docker still waits for the share (next step).
 
 Make Docker wait for the share at boot, so Nextcloud never starts against an empty folder:
 
@@ -125,7 +141,7 @@ Fill in at least these values:
 | `NEXTCLOUD_ADMIN_PASSWORD` | Password 1 (or your own strong password) |
 | `POSTGRES_PASSWORD` | Password 2 |
 | `REDIS_PASSWORD` | Password 3 |
-| `NEXTCLOUD_TRUSTED_DOMAINS` | `192.168.1.30` (the VM's IP; add your domain later, see NGINX-PROXY.md) |
+| `NEXTCLOUD_TRUSTED_DOMAINS` | `192.168.0.30` (the VM's IP; add your domain later, see NGINX-PROXY.md) |
 | `NEXTCLOUD_DATA_PATH` | `/home/nextcloud/nextcloud-data` |
 | `NEXTCLOUD_PORT` | `8080` (the port Nextcloud listens on at the VM) |
 
@@ -139,7 +155,7 @@ docker compose up -d
 docker compose logs -f nextcloud     # first install takes 1–3 minutes; Ctrl+C to stop watching
 ```
 
-**3. Open** `http://192.168.1.30:8080` in a browser on your LAN and log in with `NEXTCLOUD_ADMIN_USER` and `NEXTCLOUD_ADMIN_PASSWORD`.
+**3. Open** `http://192.168.0.30:8080` in a browser on your LAN and log in with `NEXTCLOUD_ADMIN_USER` and `NEXTCLOUD_ADMIN_PASSWORD`.
 
 The admin account and trusted domains in `.env` are only read on the very first install. To change them later, use `occ` (Part 4).
 
@@ -233,8 +249,8 @@ Nextcloud can only move up one major version at a time. Once it runs, pin `NEXTC
 | --- | --- | --- |
 | "Access through untrusted domain" | The address you use is not a trusted domain | `occ config:system:set trusted_domains 1 --value=<address>` |
 | Stack does not start after a reboot | NAS share not mounted | Start the NAS, run `sudo mount -a`, check `df -h /home/nextcloud/nextcloud-data` |
-| Nextcloud cannot write files | NAS folder not owned by uid 33 | `sudo chown 33:33 /home/nextcloud/nextcloud-data` (add `-R` if files exist) |
-| Backup: permission denied | NFS rule uses root squash | Set no root squash for the VM's IP on the NAS |
+| Nextcloud cannot write files | Share mounted without `uid=33,gid=33`, or `nextcloud-vm` lacks Read/Write on the QNAP | Check the options in `/etc/fstab` and the folder permission, then `sudo umount /home/nextcloud/nextcloud-data && sudo mount -a` |
+| Mount fails with "Permission denied" (error 13) | Wrong QNAP username or password, or no access to the folder | Check `/root/.smb-nextcloud` and the shared-folder permission on the QNAP |
 | Backup failed | Storage Box key, space or NAS mount | `journalctl -u nextcloud-backup`; if needed `occ maintenance:mode --off` |
 | Port 8080 already in use | Another service on the VM | Change `NEXTCLOUD_PORT` in `.env` and run `docker compose up -d` |
 

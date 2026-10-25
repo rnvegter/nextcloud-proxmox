@@ -1,8 +1,8 @@
 # Connect Nextcloud to an nginx proxy on another machine
 
-The nginx machine receives `https://cloud.example.com`, holds the HTTPS certificate and forwards every request to Nextcloud at `http://192.168.1.30:8080`. Nextcloud itself stays plain HTTP inside your LAN; it only needs to know that a proxy sits in front of it.
+The nginx machine receives `https://cloud.example.com`, holds the HTTPS certificate and forwards every request to Nextcloud at `http://192.168.0.30:8080`. Nextcloud itself stays plain HTTP inside your LAN; it only needs to know that a proxy sits in front of it.
 
-The examples use `192.168.1.10` for the nginx machine, `192.168.1.30` for the Nextcloud VM and `cloud.example.com` for your domain.
+The examples use `192.168.0.10` for the nginx machine, `192.168.0.30` for the Nextcloud VM and `cloud.example.com` for your domain. Replace the first two with your real addresses.
 
 **Before you start**
 
@@ -15,7 +15,7 @@ The examples use `192.168.1.10` for the nginx machine, `192.168.1.30` for the Ne
 On the VM, as `nextcloud`, set the four proxy variables in `.env`:
 
 ```bash
-TRUSTED_PROXIES=192.168.1.10
+TRUSTED_PROXIES=192.168.0.10
 OVERWRITEPROTOCOL=https
 OVERWRITEHOST=cloud.example.com
 OVERWRITECLIURL=https://cloud.example.com
@@ -56,7 +56,7 @@ server {
     location = /.well-known/caldav  { return 301 $scheme://$host/remote.php/dav/; }
 
     location / {
-        proxy_pass http://192.168.1.30:8080;
+        proxy_pass http://192.168.0.30:8080;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -82,13 +82,13 @@ certbot renews the certificate automatically. If you already manage certificates
 
 1. Open `https://cloud.example.com` from outside your network (for example on your phone without Wi-Fi) and log in.
 2. *Administration settings → Overview* shows no warnings about HTTPS, the proxy or `.well-known` URLs.
-3. *Personal settings → Security* lists your session with your real public IP, not `192.168.1.10`.
+3. *Personal settings → Security* lists your session with your real public IP, not `192.168.0.10`.
 
 ## Using Nginx Proxy Manager instead
 
 If the other machine runs Nginx Proxy Manager (the web interface), Step 1 stays the same, with `TRUSTED_PROXIES` set to that machine's IP. Then:
 
-1. *Hosts → Proxy Hosts → Add Proxy Host*: domain `cloud.example.com`, scheme `http`, forward hostname `192.168.1.30`, port `8080`. Tick *Block Common Exploits* and *Websockets Support*.
+1. *Hosts → Proxy Hosts → Add Proxy Host*: domain `cloud.example.com`, scheme `http`, forward hostname `192.168.0.30`, port `8080`. Tick *Block Common Exploits* and *Websockets Support*.
 2. *SSL* tab: *Request a new SSL Certificate*, and tick *Force SSL*, *HTTP/2 Support* and *HSTS Enabled*.
 3. *Advanced* tab, custom configuration:
 
@@ -105,10 +105,10 @@ location = /.well-known/caldav  { return 301 $scheme://$host/remote.php/dav/; }
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| 502 Bad Gateway | nginx cannot reach the VM | From the nginx machine: `curl -I http://192.168.1.30:8080`; check `docker compose ps` on the VM |
+| 502 Bad Gateway | nginx cannot reach the VM | From the nginx machine: `curl -I http://192.168.0.30:8080`; check `docker compose ps` on the VM |
 | "Access through untrusted domain" | Domain not trusted | Run the `occ ... trusted_domains` command from Step 1 |
 | Redirects to `http://` or to port 8080 | Overwrite settings missing | Check the four variables in `.env`, then `docker compose up -d` |
 | 413 Request Entity Too Large | Upload limit in nginx | Raise `client_max_body_size` and reload nginx |
 | 504 Gateway Timeout on big uploads | nginx timeouts | Raise `proxy_read_timeout` and `proxy_send_timeout` |
-| Log shows `192.168.1.10` instead of visitor IPs | `TRUSTED_PROXIES` wrong | Set it to the nginx machine's IP as the VM sees it |
+| Log shows `192.168.0.10` instead of visitor IPs | `TRUSTED_PROXIES` wrong | Set it to the nginx machine's IP as the VM sees it |
 | certbot fails | Port 80 not forwarded, or DNS not pointing at you | Check the router forward and the A record |
