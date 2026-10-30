@@ -1,11 +1,11 @@
 # nextcloud-proxmox
 
-The standard Nextcloud Docker stack for an Ubuntu VM (Proxmox), configured from one `.env` file. User files live on a NAS over NFS, and restic sends nightly backups to a Hetzner Storage Box. For access from the internet, an nginx reverse proxy on another machine sits in front.
+The standard Nextcloud Docker stack for an Ubuntu VM (Proxmox), configured from one `.env` file. User files live on a NAS over NFS, and restic sends nightly backups to a Hetzner Storage Box. From the internet it is reached at `https://nextcloud.dockerapp.org` through a Caddy reverse proxy on another machine.
 
 ```
-Visitor ─▶ router ─▶ nginx proxy (other machine, HTTPS) ─▶ VM :8080 ─▶ nextcloud ─▶ Postgres / Redis / cron
+Visitor ─▶ FritzBox ─▶ UniFi ─▶ Caddy proxy (192.168.0.201, HTTPS) ─▶ VM :8080 ─▶ nextcloud ─▶ Postgres / Redis / cron
                                                                          │
-                                                       NAS (NFS) ◀───────┘      restic ─▶ Hetzner Storage Box
+                                                                  QNAP (NFS) ◀───────┘      restic ─▶ Hetzner Storage Box
 ```
 
 | Container | Image | Job |
@@ -42,12 +42,12 @@ cp env.example .env && chmod 600 .env && nano .env
 docker compose up -d
 ```
 
-Then open `http://<VM-IP>:8080`.
+Then open `http://192.168.0.202:8080` (LAN) or `https://nextcloud.dockerapp.org` (internet, via Caddy).
 
 ## Documentation
 
 - [docs/MANUAL.md](docs/MANUAL.md): full setup, NAS share, first settings, backups, updates and troubleshooting.
-- [docs/NGINX-PROXY.md](docs/NGINX-PROXY.md): connecting the stack to an nginx (or Nginx Proxy Manager) proxy on another machine.
+- [docs/CADDY-PROXY.md](docs/CADDY-PROXY.md): publishing Nextcloud through the Caddy proxy, including port forwarding through the FritzBox and the UniFi gateway.
 
 ## Secrets
 

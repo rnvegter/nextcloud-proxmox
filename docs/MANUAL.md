@@ -4,7 +4,7 @@ Oct 25, 2026 · Niels Vegter
 
 ## Overview
 
-This manual sets up the standard Nextcloud Docker stack on an Ubuntu VM, configured from one `.env` file. Nextcloud answers on `http://<VM-IP>:8080` in your LAN. To reach it from the internet over HTTPS, put the nginx reverse proxy on your other machine in front of it; [NGINX-PROXY.md](NGINX-PROXY.md) explains that part.
+This manual sets up the standard Nextcloud Docker stack on an Ubuntu VM, configured from one `.env` file. Nextcloud answers on `http://192.168.0.202:8080` in your LAN. From the internet it is reached at `https://nextcloud.dockerapp.org` through the Caddy reverse proxy on a separate machine; [CADDY-PROXY.md](CADDY-PROXY.md) explains that part.
 
 The stack has four containers:
 
@@ -22,14 +22,23 @@ Around it:
 - A nightly restic job backs up files, database and config to a Hetzner Storage Box.
 
 ```
-Visitor ─▶ router ─▶ nginx proxy (192.168.0.10, HTTPS) ─▶ VM 192.168.0.54:8080 ─▶ nextcloud ─▶ Postgres / Redis / cron
-                                                                                    │
-                                                                  NAS (NFS) ◀───────┘     restic ─▶ Hetzner Storage Box
+Visitor ─▶ FritzBox ─▶ UniFi ─▶ Caddy (192.168.0.201, HTTPS) ─▶ VM 192.168.0.202:8080 ─▶ nextcloud ─▶ Postgres / Redis / cron
+                                                                                 │
+                                                         QNAP 192.168.0.249 (NFS) ◀┘     restic ─▶ Hetzner Storage Box
 ```
 
-Visitors from the internet only ever reach the nginx machine; Nextcloud's port 8080 stays inside your LAN.
+Visitors from the internet only ever reach the Caddy machine; Nextcloud's port 8080 stays inside your LAN.
 
-Addresses in this setup: the QNAP NAS is `192.168.0.249` and the Nextcloud VM is `192.168.0.54`.
+Addresses in this setup:
+
+| Machine | Address |
+| --- | --- |
+| Nextcloud VM | `192.168.0.202` |
+| Caddy proxy | `192.168.0.201` |
+| QNAP NAS | `192.168.0.249` |
+| Public domain | `nextcloud.dockerapp.org` |
+
+Give the VM and the proxy a fixed address (a DHCP reservation in the UniFi gateway), so the NAS rule, the trusted domains and the proxy keep working after a reboot.
 
 **Prerequisites**
 
@@ -83,7 +92,7 @@ Nextcloud keeps user files on an NFS share on the QNAP. The database and Nextclo
 
 1. *Control Panel → Network & File Services → Win/Mac/NFS/WebDAV*, tab *NFS Service*: tick **Enable NFS v2/v3 service** and **Enable NFS v4 service**, then *Apply*.
 2. *Control Panel → Privilege → Shared Folders*: create a folder called `nextcloud`.
-3. Select it, click *Edit Shared Folder Permission* and set *Select permission type* to **NFS host access**. Tick *Access right*, add the VM's IP `192.168.0.54`, choose **Read/Write** and squash option **Squash no users**. *Apply*.
+3. Select it, click *Edit Shared Folder Permission* and set *Select permission type* to **NFS host access**. Tick *Access right*, add the VM's IP `192.168.0.202`, choose **Read/Write** and squash option **Squash no users**. *Apply*.
 4. Optional: in the snapshot settings of this folder, hide the snapshot directory. Otherwise a folder `@Recently-Snapshot` appears inside Nextcloud's data folder. That is harmless, but never delete it.
 
 **On the VM**, run these one at a time from your admin account.
@@ -173,7 +182,7 @@ Fill in at least these values:
 | `NEXTCLOUD_ADMIN_PASSWORD` | Password 1 (or your own strong password) |
 | `POSTGRES_PASSWORD` | Password 2 |
 | `REDIS_PASSWORD` | Password 3 |
-| `NEXTCLOUD_TRUSTED_DOMAINS` | `192.168.0.54` (the VM's IP; add your domain later, see NGINX-PROXY.md) |
+| `NEXTCLOUD_TRUSTED_DOMAINS` | `192.168.0.202` (the VM's IP; add your domain later, see CADDY-PROXY.md) |
 | `NEXTCLOUD_DATA_PATH` | `/home/nextcloud/nextcloud-data` |
 | `NEXTCLOUD_PORT` | `8080` (the port Nextcloud listens on at the VM) |
 
@@ -187,7 +196,7 @@ docker compose up -d
 docker compose logs -f nextcloud     # first install takes 1–3 minutes; Ctrl+C to stop watching
 ```
 
-**3. Open** `http://192.168.0.54:8080` in a browser on your LAN and log in with `NEXTCLOUD_ADMIN_USER` and `NEXTCLOUD_ADMIN_PASSWORD`.
+**3. Open** `http://192.168.0.202:8080` in a browser on your LAN and log in with `NEXTCLOUD_ADMIN_USER` and `NEXTCLOUD_ADMIN_PASSWORD`.
 
 The admin account and trusted domains in `.env` are only read on the very first install. To change them later, use `occ` (Part 4).
 
@@ -287,6 +296,10 @@ Nextcloud can only move up one major version at a time. Once it runs, pin `NEXTC
 | `sudo mount -a` hangs | Wrong NAS address in `/etc/fstab`, or NFS off on the QNAP | Ctrl+C; check the fstab line uses `192.168.0.249`; check the QNAP NFS service |
 | `showmount`: program not registered | NFS v2/v3 service off on the QNAP | Tick *Enable NFS v2/v3 service* (Part 2, step 1) |
 | Root can write to the share, uid 33 cannot | Usually a test artefact: uid 33 cannot enter your home folder | Use the Docker write test from Part 2 |
+| `showmount`: RPC: Unable to receive, or `rpcinfo`: Connection refused, while the NAS answers ping | The QNAP's NFS service has stalled (often after a QNAP update or reboot) | On the QNAP, untick NFS v2/v3 and v4, *Apply*, tick both again, *Apply*. Then on the VM: `sudo mount -a`, `sudo systemctl start docker`, `docker compose up -d` |
+| `mount.nfs: access denied by server` | The VM's IP changed and no longer matches the QNAP NFS rule | Check `ip -4 addr`; fix the IP with a DHCP reservation, or update the NFS host access rule |
+| Cannot connect to the Docker daemon | Docker waits for the NAS share, which is not mounted | Fix the mount first (`df -h /home/nextcloud/nextcloud-data`), then `sudo systemctl start docker` |
+| Forgot the admin password | The password in `.env` is only used at the first install | `docker compose exec -u www-data nextcloud php occ user:resetpassword admin` |
 | Backup failed | Storage Box key, space or NAS mount | `journalctl -u nextcloud-backup`; if needed `occ maintenance:mode --off` |
 | Port 8080 already in use | Another service on the VM | Change `NEXTCLOUD_PORT` in `.env` and run `docker compose up -d` |
 
@@ -320,7 +333,7 @@ sudo chown 33:33 /home/nextcloud/nextcloud-data
 sudo chmod 750 /home/nextcloud/nextcloud-data
 ```
 
-Check `NEXTCLOUD_TRUSTED_DOMAINS=192.168.0.54` in `.env`:
+Check `NEXTCLOUD_TRUSTED_DOMAINS=192.168.0.202` in `.env`:
 
 ```bash
 nano .env

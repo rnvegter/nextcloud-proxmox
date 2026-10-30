@@ -42,7 +42,7 @@ services:
       # Cache and file locking
       REDIS_HOST: redis
       REDIS_HOST_PASSWORD: ${REDIS_PASSWORD}
-      # Reverse proxy (empty = no proxy; see docs/NGINX-PROXY.md)
+      # Reverse proxy (empty = no proxy; see docs/CADDY-PROXY.md)
       TRUSTED_PROXIES: ${TRUSTED_PROXIES}
       OVERWRITEPROTOCOL: ${OVERWRITEPROTOCOL}
       OVERWRITEHOST: ${OVERWRITEHOST}
