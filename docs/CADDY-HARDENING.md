@@ -548,6 +548,22 @@ Keep the files private, because they contain the secrets:
 chmod 600 /etc/authelia/configuration.yml /etc/authelia/users_database.yml
 ```
 
+Authelia runs as its own user, not as `root`. Check the name (usually `authelia`):
+
+```bash
+systemctl cat authelia | grep -iE '^(User|Group)='
+```
+
+Give that user the files and the data folder. Without this, Authelia can't read its configuration and stops with errors saying every option is missing:
+
+```bash
+chown authelia:authelia /etc/authelia/configuration.yml /etc/authelia/users_database.yml
+```
+
+```bash
+chown -R authelia:authelia /var/lib/authelia
+```
+
 Check the configuration, then start Authelia:
 
 ```bash
@@ -634,5 +650,6 @@ cat /var/lib/authelia/notification.txt
 | Nextcloud warns about a header ("…is not set to…") | Header value differs from what Nextcloud wants, or `defer` missing | Compare with the `(hardening)` snippet above |
 | Phone app stops syncing while abroad | GeoIP filter (Step 5) | Add the country to `allow_countries`, or use the VPN home |
 | Authelia: "There was an issue retrieving the current user state" or a redirect loop | Cookie domain or `authelia_url` wrong | `session.cookies` must say `dockerapp.org` and `https://auth.dockerapp.org`; check `journalctl -u authelia` |
+| Authelia won't start, log says every option is missing (`cookies`, `encryption_key`, …) | The `authelia` user can't read the configuration | `chown` the files as in the Authelia steps, then `systemctl restart authelia` |
 | Authelia won't start | Error in the configuration | `authelia validate-config --config /etc/authelia/configuration.yml` shows the line |
 | Caddy log: `geoip database not found` | Database missing or wrong path | `geoipupdate`, then `ls -l /var/lib/GeoIP/` |

@@ -486,6 +486,22 @@ Keep the files private, because they contain the secrets:
 chmod 600 /etc/authelia/configuration.yml /etc/authelia/users_database.yml
 ```
 
+Authelia runs as its own user, not as `root`. Check the name (usually `authelia`):
+
+```bash
+systemctl cat authelia | grep -iE '^(User|Group)='
+```
+
+Give that user the files and the data folder. Without this, Authelia can't read its configuration and stops with errors saying every option is missing:
+
+```bash
+chown authelia:authelia /etc/authelia/configuration.yml /etc/authelia/users_database.yml
+```
+
+```bash
+chown -R authelia:authelia /var/lib/authelia
+```
+
 Check the configuration:
 
 ```bash
@@ -607,6 +623,7 @@ It is more work, and the addresses of Caddy and Nextcloud change, so the port fo
 | Nextcloud VM: NAS mount hangs | `OUT ACCEPT -dest 192.168.0.249` missing or below the `DROP` lines | Move the line above the `DROP` lines |
 | Guest can't install updates | DNS blocked | Check the two `OUT ACCEPT … -dport 53` lines and that `192.168.0.1` is really your DNS server (`cat /etc/resolv.conf` in the guest) |
 | Container doesn't start after converting to unprivileged | Files with wrong owners, or a feature it needs | Check `journalctl` in the container; restore the old backup if needed |
+| Authelia won't start, log says every option is missing (`cookies`, `encryption_key`, …) | The `authelia` user can't read the configuration | `chown` the files as in the Authelia steps, then `systemctl restart authelia` |
 | Authelia won't start | Error in the configuration | `authelia validate-config --config /etc/authelia/configuration.yml` shows the line |
 | Authelia: redirect loop or "There was an issue retrieving the current user state" | Cookie domain or `authelia_url` wrong | `session.cookies` must say `dockerapp.org` and `https://auth.dockerapp.org`; check `journalctl -u authelia` |
 | `auth.dockerapp.org` has no certificate | DNS record missing | Add the A record; watch `journalctl -u caddy -f` |
