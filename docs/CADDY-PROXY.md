@@ -138,6 +138,8 @@ Wait for "certificate obtained successfully" for `nextcloud.dockerapp.org`, then
 2. *Administration settings → Overview* shows no warnings about HTTPS or the proxy.
 3. *Personal settings → Security* lists your session with your real public IP, not `192.168.0.201`.
 
+Nextcloud is now on the internet. Next, harden the proxy: [CADDY-HARDENING.md](CADDY-HARDENING.md) adds security headers, CrowdSec, login rate limiting, an optional EU-only filter and two-factor login.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
