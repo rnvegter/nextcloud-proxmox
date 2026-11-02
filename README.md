@@ -49,6 +49,7 @@ Then open `http://192.168.0.202:8080` (LAN) or `https://nextcloud.dockerapp.org`
 - [docs/MANUAL.md](docs/MANUAL.md): full setup, NAS share, first settings, backups, updates and troubleshooting.
 - [docs/CADDY-PROXY.md](docs/CADDY-PROXY.md): publishing Nextcloud through the Caddy proxy, including port forwarding through the FritzBox and the UniFi gateway.
 - [docs/CADDY-HARDENING.md](docs/CADDY-HARDENING.md): protecting the Caddy proxy with security headers, CrowdSec, login rate limiting, optional EU-only GeoIP filtering, Nextcloud 2FA and Authelia for other apps.
+- [docs/PROXMOX-HARDENING.md](docs/PROXMOX-HARDENING.md): protecting the Proxmox host and its internet-facing LXC containers and VMs: host lockdown, firewall rules per guest, container and VM settings, updates, SSH, Authelia, backups and an optional DMZ network.
 
 ## Secrets
 
